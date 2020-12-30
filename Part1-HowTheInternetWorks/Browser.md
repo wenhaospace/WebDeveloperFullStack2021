@@ -564,17 +564,665 @@ WebKit 和 Firefox 都进行了这项优化。在执行脚本时，其他线程�
 
 ## 4. 呈现树构建
 
+在 DOM 树构建的同时，浏览器还会构建另一个树结构：呈现树。这是由可视化元素按照其显示顺序而组成的树，也是文档的可视化表示。它的作用是让您按照正确的顺序绘制内容。
+
+Firefox 将呈现树中的元素称为“框架”。WebKit 使用的术语是呈现器或呈现对象。
+呈现器知道如何布局并将自身及其子元素绘制出来。
+WebKits RenderObject 类是所有呈现器的基类，其定义如下：
+
+```
+class RenderObject{
+  virtual void layout();
+  virtual void paint(PaintInfo);
+  virtual void rect repaintRect();
+  Node* node;  //the DOM node
+  RenderStyle* style;  // the computed style
+  RenderLayer* containgLayer; //the containing z-index layer
+}
+```
+
+每一个呈现器都代表了一个矩形的区域，通常对应于相关节点的 CSS 框，这一点在 CSS2 规范中有所描述。它包含诸如宽度、高度和位置等几何信息。
+框的类型会受到与节点相关的“display”样式属性的影响（请参阅[样式计算](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#style_computation)章节）。下面这段 WebKit 代码描述了根据 display 属性的不同，针对同一个 DOM 节点应创建什么类型的呈现器。
+
+```
+RenderObject* RenderObject::createObject(Node* node, RenderStyle* style)
+{
+    Document* doc = node->document();
+    RenderArena* arena = doc->renderArena();
+    ...
+    RenderObject* o = 0;
+
+    switch (style->display()) {
+        case NONE:
+            break;
+        case INLINE:
+            o = new (arena) RenderInline(node);
+            break;
+        case BLOCK:
+            o = new (arena) RenderBlock(node);
+            break;
+        case INLINE_BLOCK:
+            o = new (arena) RenderBlock(node);
+            break;
+        case LIST_ITEM:
+            o = new (arena) RenderListItem(node);
+            break;
+       ...
+    }
+
+    return o;
+}
+```
+
+元素类型也是考虑因素之一，例如表单控件和表格都对应特殊的框架。
+在 WebKit 中，如果一个元素需要创建特殊的呈现器，就会替换 `createRenderer` 方法。呈现器所指向的样式对象中包含了一些和几何无关的信息。
+
 ### 4.1 呈现树与DOM树的关系
+
+呈现器是和 DOM 元素相对应的，但并非一一对应。非可视化的 DOM 元素不会插入呈现树中，例如“head”元素。如果元素的 display 属性值为“none”，那么也不会显示在呈现树中（但是 visibility 属性值为“hidden”的元素仍会显示）。
+
+有一些 DOM 元素对应多个可视化对象。它们往往是具有复杂结构的元素，无法用单一的矩形来描述。例如，“select”元素有 3 个呈现器：一个用于显示区域，一个用于下拉列表框，还有一个用于按钮。如果由于宽度不够，文本无法在一行中显示而分为多行，那么新的行也会作为新的呈现器而添加。
+另一个关于多呈现器的例子是格式无效的 HTML。根据 CSS 规范，inline 元素只能包含 block 元素或 inline 元素中的一种。如果出现了混合内容，则应创建匿名的 block 呈现器，以包裹 inline 元素。
+
+有一些呈现对象对应于 DOM 节点，但在树中所在的位置与 DOM 节点不同。浮动定位和绝对定位的元素就是这样，它们处于正常的流程之外，放置在树中的其他地方，并映射到真正的框架，而放在原位的是占位框架。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image025.png)图：呈现树及其对应的 DOM 树 ([3.1](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#3_1))。初始容器 block 为“viewport”，而在 WebKit 中则为“RenderView”对象。
 
 ### 4.2 构建呈现树的流程
 
+在 Firefox 中，系统会针对 DOM 更新注册展示层，作为侦听器。展示层将框架创建工作委托给 `FrameConstructor`，由该构造器解析样式（请参阅[样式计算](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#style)）并创建框架。
+
+在 WebKit 中，解析样式和创建呈现器的过程称为“附加”。每个 DOM 节点都有一个“attach”方法。附加是同步进行的，将节点插入 DOM 树需要调用新的节点“attach”方法。
+
+处理 html 和 body 标记就会构建呈现树根节点。这个根节点呈现对象对应于 CSS 规范中所说的容器 block，这是最上层的 block，包含了其他所有 block。它的尺寸就是视口，即浏览器窗口显示区域的尺寸。Firefox 称之为 `ViewPortFrame`，而 WebKit 称之为 `RenderView`。这就是文档所指向的呈现对象。呈现树的其余部分以 DOM 树节点插入的形式来构建。
+
+请参阅[关于处理模型的 CSS2 规范](http://www.w3.org/TR/CSS21/intro.html#processing-model)。
+
 ### 4.3 样式计算
+
+构建呈现树时，需要计算每一个呈现对象的可视化属性。这是通过计算每个元素的样式属性来完成的。
+
+样式包括来自各种来源的样式表、inline 样式元素和 HTML 中的可视化属性（例如“bgcolor”属性）。其中后者将经过转化以匹配 CSS 样式属性。
+
+样式表的来源包括浏览器的默认样式表、由网页作者提供的样式表以及由浏览器用户提供的用户样式表（浏览器允许您定义自己喜欢的样式。以 Firefox 为例，用户可以将自己喜欢的样式表放在“Firefox Profile”文件夹下）。
+
+样式计算存在以下难点：
+
+1. 样式数据是一个超大的结构，存储了无数的样式属性，这可能造成内存问题。
+
+2. 如果不进行优化，为每一个元素查找匹配的规则会造成性能问题。要为每一个元素遍历整个规则列表来寻找匹配规则，这是一项浩大的工程。选择器会具有很复杂的结构，这就会导致某个匹配过程一开始看起来很可能是正确的，但最终发现其实是徒劳的，必须尝试其他匹配路径。
+
+   例如下面这个组合选择器：
+
+   ```
+   div div div div{
+     ...
+   }
+   ```
+
+   这意味着规则适用于作为 3 个 div 元素的子代的\<div>。如果您要检查规则是否适用于某个指定的\<div>元素，应选择树上的一条向上路径进行检查。您可能需要向上遍历节点树，结果发现只有两个 div，而且规则并不适用。然后，您必须尝试树中的其他路径。
+
+3. 应用规则涉及到相当复杂的层叠规则（用于定义这些规则的层次）。
+
+让我们来看看浏览器是如何处理这些问题的：
+
+- **共享样式数据**
+
+WebKit 节点会引用样式对象 (RenderStyle)。这些对象在某些情况下可以由不同节点共享。这些节点是同级关系，并且：
+
+1. 这些元素必须处于相同的鼠标状态（例如，不允许其中一个是“:hover”状态，而另一个不是）
+2. 任何元素都没有 ID
+3. 标记名称应匹配
+4. 类属性应匹配
+5. 映射属性的集合必须是完全相同的
+6. 链接状态必须匹配
+7. 焦点状态必须匹配
+8. 任何元素都不应受属性选择器的影响，这里所说的“影响”是指在选择器中的任何位置有任何使用了属性选择器的选择器匹配
+9. 元素中不能有任何 inline 样式属性
+10. 不能使用任何同级选择器。WebCore 在遇到任何同级选择器时，只会引发一个全局开关，并停用整个文档的样式共享（如果存在）。这包括 + 选择器以及 :first-child 和 :last-child 等选择器。
+
+- **Firefox 规则树**
+
+为了简化样式计算，Firefox 还采用了另外两种树：规则树和样式上下文树。WebKit 也有样式对象，但它们不是保存在类似样式上下文树这样的树结构中，只是由 DOM 节点指向此类对象的相关样式。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image035.png)
+
+<center>图：Firefox 样式上下文树 ([2.2](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#2_2))</center>
+
+样式上下文包含端值。要计算出这些值，应按照正确顺序应用所有的匹配规则，并将其从逻辑值转化为具体的值。例如，如果逻辑值是屏幕大小的百分比，则需要换算成绝对的单位。规则树的点子真的很巧妙，它使得节点之间可以共享这些值，以避免重复计算，还可以节约空间。
+
+所有匹配的规则都存储在树中。路径中的底层节点拥有较高的优先级。规则树包含了所有已知规则匹配的路径。规则的存储是延迟进行的。规则树不会在开始的时候就为所有的节点进行计算，而是只有当某个节点样式需要进行计算时，才会向规则树添加计算的路径。
+
+这个想法相当于将规则树路径视为词典中的单词。如果我们已经计算出如下的规则树：
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/tree.png)
+
+假设我们需要为内容树中的另一个元素匹配规则，并且找到匹配路径是 B - E - I（按照此顺序）。由于我们在树中已经计算出了路径 A - B - E - I - L，因此就已经有了此路径，这就减少了现在所需的工作量。
+
+
+
+让我们看看规则树如何帮助我们减少工作。
+
+- **结构划分**
+
+样式上下文可分割成多个结构。这些结构体包含了特定类别（如 border 或 color）的样式信息。结构中的属性都是继承的或非继承的。继承属性如果未由元素定义，则继承自其父代。非继承属性（也称为“重置”属性）如果未进行定义，则使用默认值。
+
+规则树通过缓存整个结构（包含计算出的端值）为我们提供帮助。这一想法假定底层节点没有提供结构的定义，则可使用上层节点中的缓存结构。
+
+- **使用规则树计算样式上下文**
+
+在计算某个特定元素的样式上下文时，我们首先计算规则树中的对应路径，或者使用现有的路径。然后我们沿此路径应用规则，在新的样式上下文中填充结构。我们从路径中拥有最高优先级的底层节点（通常也是最特殊的选择器）开始，并向上遍历规则树，直到结构填充完毕。如果该规则节点对于此结构没有任何规范，那么我们可以实现更好的优化：寻找路径更上层的节点，找到后指定完整的规范并指向相关节点即可。这是最好的优化方法，因为整个结构都能共享。这可以减少端值的计算量并节约内存。
+如果我们找到了部分定义，就会向上遍历规则树，直到结构填充完毕。
+
+如果我们找不到结构的任何定义，那么假如该结构是“继承”类型，我们会在**上下文树**中指向父代的结构，这样也可以共享结构。如果是 reset 类型的结构，则会使用默认值。
+
+如果最特殊的节点确实添加了值，那么我们需要另外进行一些计算，以便将这些值转化成实际值。然后我们将结果缓存在树节点中，供子代使用。
+
+如果某个元素与其同级元素都指向同一个树节点，那么它们就可以共享**整个样式上下文**。
+
+让我们来看一个例子，假设我们有如下 HTML 代码：
+
+```
+<html>
+  <body>
+    <div class="err" id="div1">
+      <p>
+        this is a <span class="big"> big error </span>
+        this is also a
+        <span class="big"> very  big  error</span> error
+      </p>
+    </div>
+    <div class="err" id="div2">another error</div>
+  </body>
+</html>
+```
+
+还有如下规则：
+
+```css
+div {margin:5px;color:black}.err {color:red}.big {margin-top:3px}div span {margin-bottom:4px}#div1 {color:blue}#div2 {color:green}
+```
+
+为了简便起见，我们只需要填充两个结构：color 结构和 margin 结构。color 结构只包含一个成员（即“color”），而 margin 结构包含四条边。
+形成的规则树如下图所示（节点的标记方式为“节点名 : 指向的规则序号”）：
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image027.png)
+
+<center>图：规则树</center>
+
+
+上下文树如下图所示（节点名 : 指向的规则节点）：
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image029.png)
+
+<center>图：上下文树</center>
+
+假设我们解析 HTML 时遇到了第二个 <div> 标记，我们需要为此节点创建样式上下文，并填充其样式结构。
+经过规则匹配，我们发现该 <div> 的匹配规则是第 1、2 和 6 条。这意味着规则树中已有一条路径可供我们的元素使用，我们只需要再为其添加一个节点以匹配第 6 条规则（规则树中的 F 节点）。
+我们将创建样式上下文并将其放入上下文树中。新的样式上下文将指向规则树中的 F 节点。
+
+现在我们需要填充样式结构。首先要填充的是 margin 结构。由于最后的规则节点 (F) 并没有添加到 margin 结构，我们需要上溯规则树，直至找到在先前节点插入中计算过的缓存结构，然后使用该结构。我们会在指定 margin 规则的最上层节点（即 B 节点）上找到该结构。
+
+我们已经有了 color 结构的定义，因此不能使用缓存的结构。由于 color 有一个属性，我们无需上溯规则树以填充其他属性。我们将计算端值（将字符串转化为 RGB 等）并在此节点上缓存经过计算的结构。
+
+第二个 <span> 元素处理起来更加简单。我们将匹配规则，最终发现它和之前的 span 一样指向规则 G。由于我们找到了指向同一节点的同级，就可以共享整个样式上下文了，只需指向之前 span 的上下文即可。
+
+对于包含了继承自父代的规则的结构，缓存是在上下文树中进行的（事实上 color 属性是继承的，但是 Firefox 将其视为 reset 属性，并缓存到规则树上）。
+例如，如果我们在某个段落中添加 font 规则：
+
+```
+p {font-family:Verdana;font size:10px;font-weight:bold}
+```
+
+那么，该段落元素作为上下文树中的 div 的子代，就会共享与其父代相同的 font 结构（前提是该段落没有指定 font 规则）。
+
+
+
+在 WebKit 中没有规则树，因此会对匹配的声明遍历 4 次。首先应用非重要高优先级的属性（由于作为其他属性的依据而应首先应用的属性，例如 display），接着是高优先级重要规则，然后是普通优先级非重要规则，最后是普通优先级重要规则。这意味着多次出现的属性会根据正确的层叠顺序进行解析。最后出现的最终生效。
+
+因此概括来说，共享样式对象（整个对象或者对象中的部分结构）可以解决问题 [1](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#issue1) 和问题 [3](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#issue3)。Firefox 规则树还有助于按照正确的顺序应用属性。
+
+- **对规则进行处理以简化匹配**
+
+样式规则有一些来源：
+
+- 外部样式表或样式元素中的 CSS 规则
+
+  ```
+  p {color:blue}
+  ```
+
+- inline 样式属性及类似内容
+
+  ```
+  <p style="color:blue" />
+  ```
+
+- HTML 可视化属性（映射到相关的样式规则）
+
+  ```
+  <p bgcolor="blue" />
+  ```
+
+后两种很容易和元素进行匹配，因为元素拥有样式属性，而且 HTML 属性可以使用元素作为键值进行映射。
+
+我们之前在[第 2 个问题](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#issue2)中提到过，CSS 规则匹配可能比较棘手。为了解决这一难题，可以对 CSS 规则进行一些处理，以便访问。
+
+样式表解析完毕后，系统会根据选择器将 CSS 规则添加到某个哈希表中。这些哈希表的选择器各不相同，包括 ID、类名称、标记名称等，还有一种通用哈希表，适合不属于上述类别的规则。如果选择器是 ID，规则就会添加到 ID 表中；如果选择器是类，规则就会添加到类表中，依此类推。
+这种处理可以大大简化规则匹配。我们无需查看每一条声明，只要从哈希表中提取元素的相关规则即可。这种优化方法可排除掉 95% 以上规则，因此在匹配过程中根本就不用考虑这些规则了 ([4.1](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#4_1))。
+
+我们以如下的样式规则为例：
+
+```
+p.error {color:red}
+#messageDiv {height:50px}
+div {margin:5px}
+```
+
+第一条规则将插入类表，第二条将插入 ID 表，而第三条将插入标记表。
+对于下面的 HTML 代码段：
+
+```
+<p class="error">an error occurred </p>
+<div id="messageDiv">this is a message</div>
+```
+
+
+
+我们首先会为 p 元素寻找匹配的规则。类表中有一个“error”键，在下面可以找到“p.error”的规则。div 元素在 ID 表（键为 ID）和标记表中有相关的规则。剩下的工作就是找出哪些根据键提取的规则是真正匹配的了。
+例如，如果 div 的对应规则如下：
+
+```
+table div {margin:5px}
+```
+
+这条规则仍然会从标记表中提取出来，因为键是最右边的选择器，但这条规则并不匹配我们的 div 元素，因为 div 没有 table 祖先。
+
+
+
+WebKit 和 Firefox 都进行了这一处理。
+
+- **以正确的层叠顺序应用规则**
+
+样式对象具有与每个可视化属性一一对应的属性（均为 CSS 属性但更为通用）。如果某个属性未由任何匹配规则所定义，那么部分属性就可由父代元素样式对象继承。其他属性具有默认值。
+
+如果定义不止一个，就会出现问题，需要通过层叠顺序来解决。
+
+- **样式表层叠顺序**
+
+某个样式属性的声明可能会出现在多个样式表中，也可能在同一个样式表中出现多次。这意味着应用规则的顺序极为重要。这称为“层叠”顺序。根据 CSS2 规范，层叠的顺序为（优先级从低到高）：
+
+1. 浏览器声明
+2. 用户普通声明
+3. 作者普通声明
+4. 作者重要声明
+5. 用户重要声明
+
+
+
+浏览器声明是重要程度最低的，而用户只有将该声明标记为“重要”才可以替换网页作者的声明。同样顺序的声明会根据[特异性](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#Specificity)进行排序，然后再是其指定顺序。HTML 可视化属性会转换成匹配的 CSS 声明。它们被视为低优先级的网页作者规则。
+
+- **特异性**
+
+选择器的特异性由 [CSS2 规范](http://www.w3.org/TR/CSS2/cascade.html#specificity)定义如下：
+
+- 如果声明来自于“style”属性，而不是带有选择器的规则，则记为 1，否则记为 0 (= a)
+- 记为选择器中 ID 属性的个数 (= b)
+- 记为选择器中其他属性和伪类的个数 (= c)
+- 记为选择器中元素名称和伪元素的个数 (= d)
+
+将四个数字按 a-b-c-d 这样连接起来（位于大数进制的数字系统中），构成特异性。
+
+
+
+您使用的进制取决于上述类别中的最高计数。
+例如，如果 a=14，您可以使用十六进制。如果 a=17，那么您需要使用十七进制；当然不太可能出现这种情况，除非是存在如下的选择器：html body div div p ...（在选择器中出现了 17 个标记，这样的可能性极低）。
+
+一些示例：
+
+```
+ *             {}  /* a=0 b=0 c=0 d=0 -> specificity = 0,0,0,0 */
+ li            {}  /* a=0 b=0 c=0 d=1 -> specificity = 0,0,0,1 */
+ li:first-line {}  /* a=0 b=0 c=0 d=2 -> specificity = 0,0,0,2 */
+ ul li         {}  /* a=0 b=0 c=0 d=2 -> specificity = 0,0,0,2 */
+ ul ol+li      {}  /* a=0 b=0 c=0 d=3 -> specificity = 0,0,0,3 */
+ h1 + *[rel=up]{}  /* a=0 b=0 c=1 d=1 -> specificity = 0,0,1,1 */
+ ul ol li.red  {}  /* a=0 b=0 c=1 d=3 -> specificity = 0,0,1,3 */
+ li.red.level  {}  /* a=0 b=0 c=2 d=1 -> specificity = 0,0,2,1 */
+ #x34y         {}  /* a=0 b=1 c=0 d=0 -> specificity = 0,1,0,0 */
+ style=""          /* a=1 b=0 c=0 d=0 -> specificity = 1,0,0,0 */
+```
+
+
+
+- **规则排序**
+
+找到匹配的规则之后，应根据级联顺序将其排序。WebKit 对于较小的列表会使用冒泡排序，而对较大的列表则使用归并排序。对于以下规则，WebKit 通过替换“>”运算符来实现排序：
+
+```
+static bool operator >(CSSRuleData& r1, CSSRuleData& r2)
+{
+    int spec1 = r1.selector()->specificity();
+    int spec2 = r2.selector()->specificity();
+    return (spec1 == spec2) : r1.position() > r2.position() : spec1 > spec2;
+}
+```
 
 ### 4.4 渐进式处理
 
+WebKit 使用一个标记来表示是否所有的顶级样式表（包括 @imports）均已加载完毕。如果在附加过程中尚未完全加载样式，则使用占位符，并在文档中进行标注，等样式表加载完毕后再重新计算。
+
+----
+
+## 5.布局
+
+呈现器在创建完成并添加到呈现树时，并不包含位置和大小信息。计算这些值的过程称为布局或重排。
+
+HTML 采用基于流的布局模型，这意味着大多数情况下只要一次遍历就能计算出几何信息。处于流中靠后位置元素通常不会影响靠前位置元素的几何特征，因此布局可以按从左至右、从上至下的顺序遍历文档。但是也有例外情况，比如 HTML 表格的计算就需要不止一次的遍历 ([3.5](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#3_5))。
+
+坐标系是相对于根框架而建立的，使用的是上坐标和左坐标。
+
+布局是一个递归的过程。它从根呈现器（对应于 HTML 文档的 `<html>` 元素）开始，然后递归遍历部分或所有的框架层次结构，为每一个需要计算的呈现器计算几何信息。
+
+根呈现器的位置左边是 0,0，其尺寸为视口（也就是浏览器窗口的可见区域）。
+
+所有的呈现器都有一个“layout”或者“reflow”方法，每一个呈现器都会调用其需要进行布局的子代的 layout 方法。
+
+### 5.1 Dirty位布局
+
+为避免对所有细小更改都进行整体布局，浏览器采用了一种“dirty 位”系统。如果某个呈现器发生了更改，或者将自身及其子代标注为“dirty”，则需要进行布局。
+
+有两种标记：“dirty”和“children are dirty”。“children are dirty”表示尽管呈现器自身没有变化，但它至少有一个子代需要布局。
+
+### 5.2 全局布局和增量布局
+
+全局布局是指触发了整个呈现树范围的布局，触发原因可能包括：
+
+1. 影响所有呈现器的全局样式更改，例如字体大小更改。
+2. 屏幕大小调整。
+
+布局可以采用增量方式，也就是只对 dirty 呈现器进行布局（这样可能存在需要进行额外布局的弊端）。
+当呈现器为 dirty 时，会异步触发增量布局。例如，当来自网络的额外内容添加到 DOM 树之后，新的呈现器附加到了呈现树中。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/reflow.png)图：增量布局 - 只有 dirty 呈现器及其子代进行布局 ([3.6](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#3_6))。
+
+### 5.3 异步布局和同步布局
+
+增量布局是异步执行的。Firefox 将增量布局的“reflow 命令”加入队列，而调度程序会触发这些命令的批量执行。WebKit 也有用于执行增量布局的计时器：对呈现树进行遍历，并对 dirty 呈现器进行布局。
+请求样式信息（例如“offsetHeight”）的脚本可同步触发增量布局。
+全局布局往往是同步触发的。
+有时，当初始布局完成之后，如果一些属性（如滚动位置）发生变化，布局就会作为回调而触发。
+
+### 5.4 优化
+
+如果布局是由“大小调整”或呈现器的位置（而非大小）改变而触发的，那么可以从缓存中获取呈现器的大小，而无需重新计算。
+在某些情况下，只有一个子树进行了修改，因此无需从根节点开始布局。这适用于在本地进行更改而不影响周围元素的情况，例如在文本字段中插入文本（否则每次键盘输入都将触发从根节点开始的布局）。
+
+### 5.5 布局处理
+
+布局通常具有以下模式：
+
+1. 父呈现器确定自己的宽度。
+2. 父呈现器依次处理子呈现器，并且：
+   1. 放置子呈现器（设置 x,y 坐标）。
+   2. 如果有必要，调用子呈现器的布局（如果子呈现器是 dirty 的，或者这是全局布局，或出于其他某些原因），这会计算子呈现器的高度。
+3. 父呈现器根据子呈现器的累加高度以及边距和补白的高度来设置自身高度，此值也可供父呈现器的父呈现器使用。
+4. 将其 dirty 位设置为 false。
 
 
 
+Firefox 使用“state”对象 (nsHTMLReflowState) 作为布局的参数（称为“reflow”），这其中包括了父呈现器的宽度。
+Firefox 布局的输出为“metrics”对象 (nsHTMLReflowMetrics)，其包含计算得出的呈现器高度。
+
+### 5.6 宽度计算
+
+呈现器宽度是根据容器块的宽度、呈现器样式中的“width”属性以及边距和边框计算得出的。
+例如以下 div 的宽度：
+
+```
+<div style="width:30%"/>
+```
+
+将由 WebKit 计算如下（BenderBox 类，calcWidth 方法）：
+
+- 容器的宽度取容器的 availableWidth 和 0 中的较大值。availableWidth 在本例中相当于 contentWidth，计算公式如下：
+
+  ```
+  clientWidth() - paddingLeft() - paddingRight()
+  ```
+
+  clientWidth 和 clientHeight 表示一个对象的内部（除去边框和滚动条）。
+
+- 元素的宽度是“width”样式属性。它会根据容器宽度的百分比计算得出一个绝对值。
+
+- 然后加上水平方向的边框和补白。
+
+现在计算得出的是“preferred width”。然后需要计算最小宽度和最大宽度。
+如果首选宽度大于最大宽度，那么应使用最大宽度。如果首选宽度小于最小宽度（最小的不可破开单位），那么应使用最小宽度。
+
+这些值会缓存起来，以用于需要布局而宽度不变的情况。
+
+### 5.7 换行
+
+如果呈现器在布局过程中需要换行，会立即停止布局，并告知其父代需要换行。父代会创建额外的呈现器，并对其调用布局。
+
+----
+
+## 6. 绘制
+
+在绘制阶段，系统会遍历呈现树，并调用呈现器的“paint”方法，将呈现器的内容显示在屏幕上。绘制工作是使用用户界面基础组件完成的。
+
+### 6.1 全局绘制和增量绘制
+
+和布局一样，绘制也分为全局（绘制整个呈现树）和增量两种。在增量绘制中，部分呈现器发生了更改，但是不会影响整个树。更改后的呈现器将其在屏幕上对应的矩形区域设为无效，这导致 OS 将其视为一块“dirty 区域”，并生成“paint”事件。OS 会很巧妙地将多个区域合并成一个。在 Chrome 浏览器中，情况要更复杂一些，因为 Chrome 浏览器的呈现器不在主进程上。Chrome 浏览器会在某种程度上模拟 OS 的行为。展示层会侦听这些事件，并将消息委托给呈现根节点。然后遍历呈现树，直到找到相关的呈现器，该呈现器会重新绘制自己（通常也包括其子代）。
+
+### 6.2 绘制顺序
+
+[CSS2 规范定义了绘制流程的顺序](http://www.w3.org/TR/CSS21/zindex.html)。绘制的顺序其实就是元素进入[堆栈样式上下文](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/#stackingcontext)的顺序。这些堆栈会从后往前绘制，因此这样的顺序会影响绘制。块呈现器的堆栈顺序如下：
+
+1. 背景颜色
+2. 背景图片
+3. 边框
+4. 子代
+5. 轮廓
+
+### 6.3 Firefox显示列表
+
+Firefox 遍历整个呈现树，为绘制的矩形建立一个显示列表。列表中按照正确的绘制顺序（先是呈现器的背景，然后是边框等等）包含了与矩形相关的呈现器。这样等到重新绘制的时候，只需遍历一次呈现树，而不用多次遍历（绘制所有背景，然后绘制所有图片，再绘制所有边框等等）。
+
+Firefox 对此过程进行了优化，也就是不添加隐藏的元素，例如被不透明元素完全遮挡住的元素。
+
+### 6.4 WebKit矩形存储
+
+在重新绘制之前，WebKit 会将原来的矩形另存为一张位图，然后只绘制新旧矩形之间的差异部分。
+
+----
+
+## 7. 动态变化
+
+在发生变化时，浏览器会尽可能做出最小的响应。因此，元素的颜色改变后，只会对该元素进行重绘。元素的位置改变后，只会对该元素及其子元素（可能还有同级元素）进行布局和重绘。添加 DOM 节点后，会对该节点进行布局和重绘。一些重大变化（例如增大“html”元素的字体）会导致缓存无效，使得整个呈现树都会进行重新布局和绘制。
+
+## 8. 呈现引擎的线程
+
+呈现引擎采用了单线程。几乎所有操作（除了网络操作）都是在单线程中进行的。在 Firefox 和 Safari 中，该线程就是浏览器的主线程。而在 Chrome 浏览器中，该线程是标签进程的主线程。
+网络操作可由多个并行线程执行。并行连接数是有限的（通常为 2 至 6 个，以 Firefox 3 为例是 6 个）。
+
+### 8.1 事件循环
+
+浏览器的主线程是事件循环。它是一个无限循环，永远处于接受处理状态，并等待事件（如布局和绘制事件）发生，并进行处理。这是 Firefox 中关于主事件循环的代码：
+
+```
+while (!mExiting)
+    NS_ProcessNextEvent(thread);
+```
+
+----
+
+## 9. CSS2可视化模型
+
+### 画布
+
+根据 [CSS2 规范](http://www.w3.org/TR/CSS21/intro.html#processing-model)，“画布”这一术语是指“用来呈现格式化结构的空间”，也就是供浏览器绘制内容的区域。画布的空间尺寸大小是无限的，但是浏览器会根据视口的尺寸选择一个初始宽度。
+
+根据 [www.w3.org/TR/CSS2/zindex.html](http://www.w3.org/TR/CSS2/zindex.html)，画布如果包含在其他画布内，就是透明的；否则会由浏览器指定一种颜色。
+
+### CSS 框模型
+
+[CSS 框模型](http://www.w3.org/TR/CSS2/box.html)描述的是针对文档树中的元素而生成，并根据可视化格式模型进行布局的矩形框。
+每个框都有一个内容区域（例如文本、图片等），还有可选的周围补白、边框和边距区域。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image046.jpg)
+
+<center>图：CSS2 框模型</center>
+
+每一个节点都会生成 0..n 个这样的框。
+所有元素都有一个“display”属性，决定了它们所对应生成的框类型。示例：
+
+```
+block  - generates a block box.
+inline - generates one or more inline boxes.
+none - no box is generated.
+```
+
+默认值是 inline，但是浏览器样式表设置了其他默认值。例如，“div”元素的 display 属性默认值是 block。
+您可以在这里找到默认样式表示例：[www.w3.org/TR/CSS2/sample.html](http://www.w3.org/TR/CSS2/sample.html)
+
+
+
+### 定位方案
+
+有三种定位方案：
+
+1. 普通：根据对象在文档中的位置进行定位，也就是说对象在呈现树中的位置和它在 DOM 树中的位置相似，并根据其框类型和尺寸进行布局。
+2. 浮动：对象先按照普通流进行布局，然后尽可能地向左或向右移动。
+3. 绝对：对象在呈现树中的位置和它在 DOM 树中的位置不同。
+
+
+
+定位方案是由“position”属性和“float”属性设置的。
+
+- 如果值是 static 和 relative，就是普通流
+- 如果值是 absolute 和 fixed，就是绝对定位
+
+
+static 定位无需定义位置，而是使用默认定位。对于其他方案，网页作者需要指定位置：top、bottom、left、right。
+
+
+
+框的布局方式是由以下因素决定的：
+
+- 框类型
+- 框尺寸
+- 定位方案
+- 外部信息，例如图片大小和屏幕大小
+
+
+
+### 框类型
+
+block 框：形成一个 block，在浏览器窗口中拥有其自己的矩形区域。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image057.png)
+
+<center>图：block 框</center>
+
+inline 框：没有自己的 block，但是位于容器 block 内。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image059.png)
+
+<center>图：inline 框</center>
+
+block 采用的是一个接一个的垂直格式，而 inline 采用的是水平格式。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image061.png)
+
+<center>图：block 和 inline 格式</center>
+
+inline 框放置在行中或“行框”中。这些行至少和最高的框一样高，还可以更高，当框根据“底线”对齐时，这意味着元素的底部需要根据其他框中非底部的位置对齐。如果容器的宽度不够，inline 元素就会分为多行放置。在段落中经常发生这种情况。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image063.png)
+
+<center>图：行</center>
+
+### 定位
+
+#### 相对
+
+相对定位：先按照普通方式定位，然后根据所需偏移量进行移动。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image065.png)
+
+<center>图：相对定位</center>
+
+#### 浮动
+
+浮动框会移动到行的左边或右边。有趣的特征在于，其他框会浮动在它的周围。下面这段 HTML 代码：
+
+```
+<p>
+  <img style="float:right" src="images/image.gif" width="100" height="100">
+  Lorem ipsum dolor sit amet, consectetuer...
+</p>
+```
+
+显示效果如下：
+
+
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image067.png)
+
+<center>图：浮动</center>
+
+#### 绝对定位和固定定位
+
+这种布局是准确定义的，与普通流无关。元素不参与普通流。尺寸是相对于容器而言的。在固定定位中，容器就是可视区域。
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image069.png)
+
+<center>图：固定定位</center>
+
+
+请注意，即使在文档滚动时，固定框也不会移动。
+
+
+
+### 分层展示
+
+这是由 z-index CSS 属性指定的。它代表了框的第三个维度，也就是沿“z 轴”方向的位置。
+
+这些框分散到多个堆栈（称为堆栈上下文）中。在每一个堆栈中，会首先绘制后面的元素，然后在顶部绘制前面的元素，以便更靠近用户。如果出现重叠，新绘制的元素就会覆盖之前的元素。
+堆栈是按照 z-index 属性进行排序的。具有“z-index”属性的框形成了本地堆栈。视口具有外部堆栈。
+
+示例：
+
+```
+<style type="text/css">
+      div {
+        position: absolute;
+        left: 2in;
+        top: 2in;
+      }
+</style>
+
+<p>
+    <div
+         style="z-index: 3;background-color:red; width: 1in; height: 1in; ">
+    </div>
+    <div
+         style="z-index: 1;background-color:green;width: 2in; height: 2in;">
+    </div>
+ </p>
+```
+
+结果如下：
+
+
+
+![img](https://html5rocks.com/zh/tutorials/internals/howbrowserswork/image071.png)
+
+<center>图：固定定位</center>
+
+虽然红色 div 在标记中的位置比绿色 div 靠前（按理应该在常规流程中优先绘制），但是 z-index 属性的优先级更高，因此它移动到了根框所保持的堆栈中更靠前的位置。
 
 # 参考文档
 
