@@ -1,4 +1,4 @@
-# HTTP
+HTTP
 
 [TOC]
 
@@ -1250,9 +1250,503 @@ HTTP的进化证实了它良好的扩展性和简易性，释放了很多应用�
 
 ## 6. Web安全准则
 
-https://infosec.mozilla.org/guidelines/web_security
+### 6.1 网络安全备忘单
+
+| 指南                                                         | 安全保障 | 实施难度 | 优先级 | 要求                                                     | 描述                                                         |
+| ------------------------------------------------------------ | -------- | -------- | ------ | -------------------------------------------------------- | ------------------------------------------------------------ |
+| [HTTPS](https://infosec.mozilla.org/guidelines/web_security#https) | **最高** | **中等** |        | 强制性                                                   | 站点应使用HTTPS（或其他安全协议）进行所有通信                |
+| [TLS Configuration](https://infosec.mozilla.org/guidelines/web_security#https) | **中等** | **中等** | 1      | 强制性                                                   | 为用户群使用最安全的Mozilla TLS配置，通常为[中级]            |
+| [Resource Loading](https://infosec.mozilla.org/guidelines/web_security#resource-loading) | **最高** | **低等** | 2      | 所有网站强制                                             | 被动和主动资源都应通过使用TLS的协议（例如HTTPS）加载         |
+| [Redirections from HTTP](https://infosec.mozilla.org/guidelines/web_security#http-redirections) | **最高** | **低等** | 3      | 强制性                                                   | 网站必须重定向到HTTPS，API端点应完全禁用HTTP                 |
+| [Strict Transport Security](https://infosec.mozilla.org/guidelines/web_security#http-strict-transport-security) | **高级** | **低等** | 4      | 所有网站强制                                             | 最小允许时间为六个月                                         |
+| [X-Frame-Options](https://infosec.mozilla.org/guidelines/web_security#x-frame-options) | **高级** | **低等** | 5      | 所有网站强制                                             | 不使用DENY或SAMEORIGIN的网站必须采用点击劫持防御             |
+| [Cross-site Request Forgery Tokenization](https://infosec.mozilla.org/guidelines/web_security#csrf-prevention) | **高级** | **未知** | 6      | 视情况而定                                               | 对于允许进行破坏性更改的网站是强制性的，对于所有其他网站都是不必要的。大多数应用程序框架具有内置的CSRF令牌化功能，以简化实施 |
+| [Cookies](https://infosec.mozilla.org/guidelines/web_security#cookies) | **高级** | **中等** | 7      | 对所有新网站都是必需的，对现有网站推荐                   | 所有cookie都必须设置安全标志，并尽可能严格地设置             |
+| [X-Content-Type-Options](https://infosec.mozilla.org/guidelines/web_security#x-content-type-options) | **低等** | **低等** | 8      | 推荐用于所有网站                                         | 网站应验证是否为所有资源设置了正确的MIME类型                 |
+| [contribute.json](https://infosec.mozilla.org/guidelines/web_security#contributejson) | **低等** | **低等** | 9      | 对所有新的Mozilla网站都是必需的，对现有的Mozilla网站推荐 | Mozilla网站应提供contribution.json并保持联系信息为最新       |
+| [Content Security Policy](https://infosec.mozilla.org/guidelines/web_security#content-security-policy) | **高等** | **高等** | 10     | 对新网站必须提供对现有网站推荐                           | 禁用内联脚本是CSP实施的最大关注点                            |
+| [Cross-origin Resource Sharing](https://infosec.mozilla.org/guidelines/web_security#cross-origin-resource-sharing) | **高等** | **低等** | 11     | 强制性的                                                 | 除特定用例外，其他情况不应存在原始共享标头和文件             |
+| [Referrer Policy](https://infosec.mozilla.org/guidelines/web_security#referrer-policy) | **低等** | **低等** | 12     | 推荐用于所有网站                                         | 改善用户隐私，防止通过“ Referer”标头泄漏内部URL              |
+| [X-XSS-Protection](https://infosec.mozilla.org/guidelines/web_security#x-xss-protection) | **低等** | **中等** | 13     | 对所有新网站都是必需的，对现有网站推荐                   | 在实施之前，应对现有网站进行手动测试                         |
+| [robots.txt](https://infosec.mozilla.org/guidelines/web_security#robotstxt) | **低等** | **低等** | 14     | 可选的                                                   | 实施robots.txt的网站只能将其用于特定目的                     |
+| [Subresource Integrity](https://infosec.mozilla.org/guidelines/web_security#subresource-integrity) | **中等** | **中等** | 15     | 推荐的                                                   | 仅适用于加载来自国外的JavaScript或样式表的网站               |
+| [Public Key Pinning](https://infosec.mozilla.org/guidelines/web_security#http-public-key-pinning) | **低等** | **中等** | --     | 仅对最大风险站点是强制性的                               | 不推荐用于大多数网站                                         |
+
+实施Web安全准则的建议顺序。从操作和开发的角度来看，它基于安全影响和易于实施的组合。
+
+### 6.2 传输层安全性（TLS / SSL）
+
+传输层安全性确保Mozilla内部和外部的所有通信的机密性，身份验证和完整性。为了保护我们的用户和网络系统，所有系统都必须支持和使用TLS加密通信。
+
+#### 6.2.1 HTTPS
+
+与现代浏览器和系统通信的网站或API端点应仅使用Mozilla现代TLS配置。
+
+供一般公众使用的网站应使用Mozilla中间TLS配置。
+
+需要与非常旧的浏览器和操作系统向后兼容的网站可以使用Mozilla向后兼容TLS配置。不建议这样做，并且在风险评估中应注意使用此兼容性级别。
+
+#### 6.2.2 HTTP严格传输安全性
+
+HTTP严格传输安全性（HSTS）是HTTP标头，用于通知用户代理仅通过HTTPS连接到给定站点，即使选择的方案是HTTP。为给定站点设置了HSTS的浏览器将透明地将所有请求升级到HTTPS。 HSTS还通过禁用用户绕过错误页面的功能，告诉浏览器更严格地处理TLS和与证书相关的错误。
+标头由一个强制参数（max-age）和两个可选参数（includeSubDomains和preload）组成，以分号分隔。
+
+**指令：**
+
+- `max-age:` 用户代理将重定向到HTTPS的时间（以秒为单位）
+- `includeSubDomains:`用户代理是否应升级子域上的请求
+- `preload:` 该网站是否应包含在HSTS预载列表中
+
+`max-age` 必须设置为至少六个月（15768000），但建议使用更长的时间，例如两年（63072000）。请注意，一旦设置了该值，站点必须继续支持HTTPS，直到达到到期时间为止。
+
+`includeSubDomains` 通知浏览器当前来源的所有子域也应通过HSTS进行升级。例如，在domain.mozilla.com上设置includeSubDomains还将在host1.domain.mozilla.com和host2.domain.mozilla.com上对其进行设置。设置includeSubDomains标志时，需要格外小心，因为它可能会禁用尚未启用HTTPS的子域上的网站。
+
+`preload` 允许网站在提交后被包含在HSTS预载列表中。结果，Web浏览器将无需进行初始HSTS标头即可对站点进行HTTPS升级。这样可以防止在首次使用时进行降级攻击，建议所有高风险网站使用。请注意，要包含在HSTS预加载列表中，还需要设置includeSubDomains。
+
+**举例：**
+
+```
+# Only connect to this site via HTTPS for the two years (recommended)
+Strict-Transport-Security: max-age=63072000
+
+# Only connect to this site and subdomains via HTTPS for the next two years and also include in the preload list
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+```
+
+#### 6.2.3 HTTP重定向
+
+网站可能会继续侦听端口80（HTTP），以使用户在其地址栏中键入URL时不会出现连接错误，因为浏览器当前正在通过HTTP连接其初始请求。侦听端口80的站点应仅重定向到HTTPS上的相同资源。重定向一旦发生，HSTS应该确保将来所有通过HTTP到达站点的尝试都直接发送到安全站点。非公开使用的API或网站应完全禁止使用HTTP。
+
+重定向应该使用301重定向完成，除非它们重定向到其他路径，在这种情况下，可以使用302重定向完成。站点应避免在其他主机上从HTTP重定向到HTTPS，因为这会阻止HSTS的设置。
+
+**举例：**
+
+```
+# Redirect all incoming http requests to the same site and URI on https, using nginx
+server {
+  listen 80;
+
+  return 301 https://$host$request_uri;
+}
 
 
+# Redirect for site.mozilla.org from http to https, using Apache
+<VirtualHost *:80>
+  ServerName site.mozilla.org
+  Redirect permanent / https://site.mozilla.org/
+</VirtualHost>
+```
+
+#### 6.2.4 HTTP公钥固定
+
+风险最大的站点必须启用HTTP公钥固定（HPKP）。 HPKP指示用户代理将站点绑定到特定的根证书颁发机构，中间证书颁发机构或最终实体公共密钥。这样可以防止证书颁发机构为给定的域颁发未经授权的证书，这些证书仍然会被浏览器信任。这些欺诈性证书将使活跃的攻击者能够攻击MitM并假冒网站，从而拦截凭据和其他敏感数据。
+
+由于存在使自己无法上网的风险，必须非常谨慎地实施HPKP。这包括拥有备用钥匙销，在非生产域上进行测试，使用Public-Key-Pins-Report-Only进行测试，然后最后使用寿命很短的max-age指令进行初始测试。由于创建自我拒绝服务的风险以及颁发欺诈性证书的风险非常低，因此不建议大多数网站实施HPKP。
+
+**指令：**
+
+- `max-age:` 用户代理强制实施key pins并要求站点使用满足要求的证书的秒数
+- `includeSubDomains:` 用户代理是否应将所有子域固定到相同的固定位置
+
+与HSTS不同，设置“最大年龄”的内容高度针对特定站点。 值越长越安全，但是拧紧key pins将导致您的站点在较长时间内不可用。 建议值介于15到120天之间。
+
+**举例：**
+
+```
+# Pin to DigiCert, Let's Encrypt, and the local public-key, including subdomains, for 15 days
+Public-Key-Pins: max-age=1296000; includeSubDomains; pin-sha256="WoiWRyIOVNa9ihaBciRSC7XHjliYS9VwUGOIud4PB18=";
+ pin-sha256="YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg="; 
+ pin-sha256="P0NdsLTMT6LSwXLuSEHNlvg4WxtWb5rIJhfZMyeXUE0="
+```
+
+#### 6.2.5 资源加载
+
+所有资源（无论是否来自同一来源）都应通过安全通道加载。对于安全（HTTPS）网站，尝试不安全地加载诸如JavaScript之类的活动资源都会被浏览器阻止。通常，用户将遇到降级的UI和“混合内容”警告。尝试不安全地加载被动内容（例如图像），尽管风险较小，但仍会导致UI降级，并可能使主动攻击者破坏网站或网络钓鱼用户。
+
+尽管事实上现代浏览器已表明网站在不安全地加载资源，且这些错误的发生频率仍然很高。为防止这种情况发生，开发人员应在部署之前验证所有资源是否已安全加载。
+
+**举例：**
+
+```
+<!-- HTTPS is a fantastic way to load a JavaScript resource -->
+<script src="https://code.jquery.com/jquery-1.12.0.min.js"></script>
+
+<!-- Attempts to load over HTTP will be blocked and will generate mixed content warnings -->
+<script src="http://code.jquery.com/jquery-1.12.0.min.js"></script>
+
+<!-- Although passive content won't be blocked, it will still generate mixed content warnings -->
+<img src="http://very.badssl.com/image.jpg">
+```
+
+### 6.3 内容安全政策
+
+内容安全策略（CSP）是一个HTTP标头，允许站点操作员对可以从何处加载站点资源进行细粒度控制。使用此标头是防止跨站点脚本（XSS）漏洞的最佳方法。由于难以将CSP改造为现有网站，因此CSP对于所有新网站都是强制性的，强烈建议对所有现有高风险站点进行CSP。
+
+CSP的主要好处来自禁用不安全的嵌入式JavaScript。内联JavaScript（无论是反射的还是存储的），意味着不正确的转义用户输入都可以生成由Web浏览器解释为JavaScript的代码。通过使用CSP禁用嵌入式JavaScript，您可以有效消除针对您站点的几乎所有XSS攻击。
+
+请注意，禁用内联JavaScript意味着必须从\<script> src标记加载所有JavaScript。直接在标记上使用的事件处理程序（例如onclick）将无法正常工作，\<script>标记内的JavaScript也会通过src加载，但JavaScript不会运行。此外，使用\<style>标记或style属性的内联样式表也将无法加载。因此，在设计站点时必须小心，以使CSP易于实现。
+
+**实施说明:**
+
+- `default-src https:` 禁用了内联代码并需要使用https。
+- 对于现有的具有大型代码库的网站，需要太多的工作来禁用内联脚本，`default-src https：'unsafe-inline'`仍然很有帮助，因为它可以防止资源意外地通过http加载。 但是，它不提供任何XSS保护。
+- 建议从合理锁定的策略开始，例如`default-src'none'; img-src'self'; script-src'self'; style-src'self'`，然后在测试期间添加显示的源。
+- 代替首选的HTTP标头，页面可以改为包含一个<meta http-equiv =`“ Content-Security-Policy`” content =`“……””>标签。 如果这样做的话，它应该是出现在\<head>内部的第一个\<meta>标签。
+- Care needs to be taken with `data:` URIs, as these are unsafe inside `script-src` and `object-src` (or inherited from `default-src`).
+- Similarly, the use of `script-src 'self'` can be unsafe for sites with JSONP endpoints. These sites should use a `script-src` that includes the path to their JavaScript source folder(s).
+- Unless sites need the ability to execute plugins such as Flash or Silverlight, they should disable their execution with `object-src 'none'`.
+- Sites should ideally use the `report-uri` directive, which POSTs JSON reports about CSP violations that do occur. This allows CSP violations to be caught and repaired quickly.
+- Prior to implementation, it is recommended to use the `Content-Security-Policy-Report-Only` HTTP header, to see if any violations would have occurred with that policy.
+
+**举例：**
+
+```
+# Disable unsafe inline/eval, only allow loading of resources (images, fonts, scripts, etc.) over https
+# Note that this does not provide any XSS protection
+Content-Security-Policy: default-src https:
+
+<!-- Do the same thing, but with a <meta> tag -->
+<meta http-equiv="Content-Security-Policy" content="default-src https:">
+
+# Disable the use of unsafe inline/eval, allow everything else except plugin execution
+Content-Security-Policy: default-src *; object-src 'none'
+
+# Disable unsafe inline/eval, only load resources from same origin except also allow images from imgur
+# Also disables the execution of plugins
+Content-Security-Policy: default-src 'self'; img-src 'self' https://i.imgur.com; object-src 'none'
+
+# Disable unsafe inline/eval and plugins, only load scripts and stylesheets from same origin, fonts from google,
+# and images from same origin and imgur. Sites should aim for policies like this.
+Content-Security-Policy: default-src 'none'; font-src https://fonts.gstatic.com;
+			 img-src 'self' https://i.imgur.com; object-src 'none'; script-src 'self'; style-src 'self'
+			 
+# Pre-existing site that uses too much inline code to fix
+# but wants to ensure resources are loaded only over https and disable plugins
+Content-Security-Policy: default-src https: 'unsafe-eval' 'unsafe-inline'; object-src 'none'
+
+# Don't implement the above policy yet; instead just report violations that would have occurred
+Content-Security-Policy-Report-Only: default-src https:; report-uri /csp-violation-report-endpoint/
+
+# Disable the loading of any resources and disable framing, recommended for APIs to use
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+```
+
+### 6.4 contribute.json
+
+`contribute.json` is a text file placed within the root directory of a website that describes what it is, where its source exists, what technologies it uses, and how to reach support and contribute. `contribute.json` is a Mozilla standard used to describe all active Mozilla websites and projects.
+
+Its existence can greatly speed up the process of bug triage, particularly for smaller websites with just a handful of maintainers. It further assists security researchers to find testable websites and instructs them on where to file their bugs against. As such, `contribute.json` is mandatory for all Mozilla websites, and must be maintained as contributors join and depart projects.
+
+Require subkeys include `name`, `description`, `bugs`, `participate` (particularly `irc` and `irc-contacts`), and `urls`.
+
+**举例：**
+
+```
+{
+  "name": "Bedrock",
+    "description": "The app powering www.mozilla.org.",
+    "repository": {
+      "url": "https://github.com/mozilla/bedrock",
+      "license": "MPL2",
+      "tests": "https://travis-ci.org/mozilla/bedrock/"
+    },
+    "participate": {
+      "home": "https://wiki.mozilla.org/Webdev/GetInvolved/mozilla.org",
+      "docs": "https://bedrock.readthedocs.io/en/latest/",
+      "mailing-list": "https://www.mozilla.org/about/forums/#dev-mozilla-org",
+      "irc": "irc://irc.mozilla.org/#www",
+      "irc-contacts": [
+        "someperson1",
+        "someperson2",
+        "someperson3"
+      ]
+    },
+    "bugs": {
+      "list": "https://bugzilla.mozilla.org/describecomponents.cgi?product=www.mozilla.org",
+      "report": "https://bugzilla.mozilla.org/enter_bug.cgi?product=www.mozilla.org",
+      "mentored": "https://bugzilla.mozilla.org/buglist.cgi?f1=bug_mentor&o1=isnotempty
+                   &query_format=advanced&bug_status=NEW&product=www.mozilla.org&list_id=10866041"
+    },
+    "urls": {
+      "prod": "https://www.mozilla.org",
+      "stage": "https://www.allizom.org",
+      "dev": "https://www-dev.allizom.org",
+      "demo1": "https://www-demo1.allizom.org"
+    },
+    "keywords": [
+      "python",
+      "less-css",
+      "django",
+      "html5",
+      "jquery"
+    ]
+}
+```
+
+### 6.5 Cookies
+
+所有cookie的创建都应使其访问受到尽可能的限制。这可以帮助最大程度地减少跨站点脚本（XSS）漏洞的损害，因为这些cookie通常包含会话标识符或其他敏感信息。
+
+**指令：**
+
+- Name: Cookie names may be either be prepended with either `__Secure-`or`__Host-`to prevent cookies from being overwritten by insecure sources
+  - Use `__Host-` for all cookies needed only on a specific domain (no subdomains) where `Path` is set to `/`
+  - Use `__Secure-` for all other cookies sent from secure origins (such as HTTPS)
+- `Secure`: All cookies must be set with the `Secure` flag, indicating that they should only be sent over HTTPS
+- `HttpOnly:` Cookies that don’t require access from JavaScript should be set with the `HttpOnly` flag
+- Expiration: Cookies should expire as soon as is necessary: session identifiers in particular should expire quickly
+  - `Expires:` Sets an absolute expiration date for a given cookie
+  - `Max-Age:` Sets a relative expiration date for a given cookie (not supported by IE <8)
+- `Domain:` Cookies should only be set with this if they need to be accessible on other domains, and should be set to the most restrictive domain possible
+- `Path:` Cookies should be set to the most restrictive path possible, but for most applications this will be set to the root directory
+- `SameSite`: Forbid sending the cookie via cross-origin requests (such as from`<img>` tags, etc.), as a strong anti-CSRF measure
+  - `SameSite=Strict`: Only send the cookie when site is directly navigated to
+  - `SameSite=Lax`: Send the cookie when navigating to your site from another site
+
+**举例：**
+
+```
+# Session identifier cookie only accessible on this host that gets purged when the user closes their browser
+Set-Cookie: MOZSESSIONID=980e5da39d4b472b9f504cac9; Path=/; Secure; HttpOnly
+
+# Session identifier for all mozilla.org sites that expires in 30 days using the __Secure- prefix
+# This cookie is not sent cross-origin, but is sent when navigating to any Mozilla site from from another site
+Set-Cookie: __Secure-MOZSESSIONID=7307d70a86bd4ab5a00499762; Max-Age=2592000; Domain=mozilla.org; Path=/; Secure; HttpOnly; SameSite=Lax
+
+# Sets a long-lived cookie for the current host, accessible by Javascript, when the user accepts the ToS
+# This cookie is sent when navigating to your sent from another site, such as by clicking a link
+Set-Cookie: __Host-ACCEPTEDTOS=true; Expires=Fri, 31 Dec 9999 23:59:59 GMT; Path=/; Secure; SameSite=Lax
+
+# Session identifier used for a secure site, such as bugzilla.mozilla.org. It isn't sent from cross-origin
+# requests, nor is it sent when navigating to bugzilla.mozilla.org from another site. Used in conjunction with
+# other anti-CSRF measures, this is a very strong way to defend your site against CSRF attacks.
+Set-Cookie: __Host-BMOSESSIONID=YnVnemlsbGE=; Max-Age=2592000; Path=/; Secure; HttpOnly; SameSite=Strict
+```
+
+### 6.6 跨域资源共享
+
+`Access-Control-Allow-Origin` is an HTTP header that defines which foreign origins are allowed to access the content of pages on your domain via scripts using methods such as XMLHttpRequest. `crossdomain.xml` and `clientaccesspolicy.xml` provide similar functionality, but for Flash and Silverlight-based applications, respectively.
+
+These should not be present unless specifically needed. Use cases include content delivery networks (CDNs) that provide hosting for JavaScript/CSS libraries and public API endpoints. If present, they should be locked down to as few origins and resources as is needed for proper function. For example, if your server provides both a website and an API intended for XMLHttpRequest access on a remote websites, *only* the API resources should return the `Access-Control-Allow-Origin` header. Failure to do so will allow foreign origins to read the contents of any page on your origin.
+
+**举例：**
+
+```
+# Allow any site to read the contents of this JavaScript library, so that subresource integrity works
+Access-Control-Allow-Origin: *
+
+# Allow https://random-dashboard.mozilla.org to read the returned results of this API
+Access-Control-Allow-Origin: https://random-dashboard.mozilla.org
+
+<!-- Allow Flash from https://random-dashboard.mozilla.org to read page contents -->
+<cross-domain-policy xsi:noNamespaceSchemaLocation="http://www.adobe.com/xml/schemas/PolicyFile.xsd">
+  <allow-access-from domain="random-dashboard.mozilla.org"/>
+  <site-control permitted-cross-domain-policies="master-only"/>
+  <allow-http-request-headers-from domain="random-dashboard.mozilla.org" headers="*" secure="true"/>
+</cross-domain-policy>
+
+<!-- The same thing, but for Silverlight-->
+<?xml version="1.0" encoding="utf-8"?>
+<access-policy>
+  <cross-domain-access>
+    <policy>
+      <allow-from http-request-headers="*">
+        <domain uri="https://random-dashboard.mozilla.org"/>
+      </allow-from>
+      <grant-to>
+        <resource path="/" include-subpaths="true"/>
+      </grant-to>
+    </policy>
+  </cross-domain-access>
+</access-policy>
+```
+
+### 6.7 CSRF预防
+
+Cross-site request forgeries are a class of attacks where unauthorized commands are transmitted to a website from a trusted user. Because they inherit the users cookies (and hence session information), they appear to be validly issued commands. A CSRF attack might look like this:
+
+```
+<!-- Attempt to delete a user's account -->
+<img src="https://accounts.mozilla.org/management/delete?confirm=true">
+```
+
+When a user visits a page with that HTML fragment, the browser will attempt to make a GET request to that URL. If the user is logged in, the browser will provide their session cookies and the account deletion attempt will be successful.
+
+While there are a variety of mitigation strategies such as Origin/Referrer checking and challenge-response systems (such as [CAPTCHA](https://en.wikipedia.org/wiki/CAPTCHA)), the most common and transparent method of CSRF mitigation is through the use of anti-CSRF tokens. Anti-CSRF tokens prevent CSRF attacks by requiring the existence of a secret, unique, and unpredictable token on all destructive changes. These tokens can be set for an entire user session, rotated on a regular basis, or be created uniquely for each request. Although [`SameSite`](https://infosec.mozilla.org/guidelines/web_security#Cookies) cookies are the best defense against CSRF attacks, they are not yet fully supported in all browsers and should be used in conjunction with other anti-CSRF defenses.
+
+**举例：**
+
+```
+<!-- A secret anti-CSRF token, included in the form to delete an account -->
+<input type="hidden" name="csrftoken" value="1df93e1eafa42012f9a8aff062eeb1db0380b">
+
+# Server-side: set an anti-CSRF cookie that JavaScript must send as an X header, which can't be done cross-origin
+Set-Cookie: CSRFTOKEN=1df93e1eafa42012f9a8aff062eeb1db0380b; Path=/; Secure; SameSite=Strict
+
+// Client-side, have JavaScript add it as an X header to the XMLHttpRequest
+var token = readCookie(CSRFTOKEN);                   // read the cookie
+httpRequest.setRequestHeader('X-CSRF-Token', token); // add it as an X-CSRF-Token header
+```
+
+### 6.8 推荐人政策(Referrer Policy)
+
+When a user navigates to a site via a hyperlink or a website loads an external resource, browsers inform the destination site of the origin of the requests through the use of the HTTP `Referer` (sic) header. Although this can be useful for a variety of purposes, it can also place the privacy of users at risk. HTTP Referrer Policy allows sites to have fine-grained control over how and when browsers transmit the HTTP `Referer` header.
+
+In normal operation, if a page at https://example.com/page.html contains `<img src="https://not.example.com/image.jpg">`, then the browser will send a request like this:
+
+```
+GET /image.jpg HTTP/1.1
+Host: not.example.com
+Referer: https://example.com/page.html
+```
+
+In addition to the privacy risks that this entails, the browser may also transmit internal-use-only URLs that it may not have intended to reveal. If you as the site operator want to limit the exposure of this information, you can use HTTP Referrer Policy to either eliminate the `Referer` header or reduce the amount of information that it contains.
+
+**指令：**
+
+- `no-referrer`: never send the `Referer` header
+- `same-origin`: send referrer, but only on requests to the same origin
+- `strict-origin`: send referrer to all origins, but only the URL sans path (e.g. https://example.com/)
+- `strict-origin-when-cross-origin`: send full referrer on same origin, URL sans path on foreign origin
+
+**注意：**
+
+Although there are other options for referrer policies, they do not protect user privacy and limit exposure in the same way as the options above.
+
+`no-referrer-when-downgrade` is the default behavior for all current browsers, and can be used when sites are concerned about breaking existing systems that rely on the full Referrer header for their operation.
+
+Referrer Policy has good support across modern browsers. The exception is Microsoft Edge, which still supports an older version of the specification.
+
+**举例：**
+
+```
+# On example.com, only send the Referer header when loading or linking to other example.com resources
+Referrer-Policy: same-origin
+
+# Only send the shortened referrer to a foreign origin, full referrer to a local host
+Referrer-Policy: strict-origin-when-cross-origin
+
+# Disable referrers for browsers that don't support strict-origin-when-cross-origin
+# Uses strict-origin-when-cross-origin for browsers that do
+Referrer-Policy: no-referrer, strict-origin-when-cross-origin
+
+<!-- Do the same, but with a meta tag -->
+<meta http-equiv="Referrer-Policy" content="no-referrer, strict-origin-when-cross-origin">
+
+<!-- Do the same, but only for a single link -->
+<a href="https://mozilla.org/" referrerpolicy="no-referrer, strict-origin-when-cross-origin">
+```
+
+### 6.9 robots.txt
+
+`robots.txt` is a text file placed within the root directory of a site that tells robots (such as indexers employed by search engines) how to behave, by instructing them not to crawl certain paths on the website. This is particularly useful for reducing load on your website through disabling the crawling of automatically generated content. It can also be helpful for preventing the pollution of search results, for resources that don’t benefit from being searchable.
+
+Sites may optionally use robots.txt, but should only use it for these purposes. It should not be used as a way to prevent the disclosure of private information or to hide portions of a website. Although this does prevent these sites from appearing in search engines, it does not prevent its discovery from attackers, as `robots.txt` is frequently used for reconnaissance.
+
+**举例：**
+
+```
+# Stop all search engines from crawling this site
+User-agent: *
+Disallow: /
+
+# Using robots.txt to hide certain directories is a terrible idea
+User-agent: *
+Disallow: /secret/admin-interface
+```
+
+### 6.10 子资源完整性
+
+Subresource integrity is a recent W3C standard that protects against attackers modifying the contents of JavaScript libraries hosted on content delivery networks (CDNs) in order to create vulnerabilities in all websites that make use of that hosted library.
+
+For example, JavaScript code on jquery.org that is loaded from mozilla.org has access to the entire contents of everything of mozilla.org. If this resource was successfully attacked, it could modify download links, deface the site, steal credentials, cause denial-of-service attacks, and more.
+
+Subresource integrity locks an external JavaScript resource to its known contents at a specific point in time. If the file is modified at any point thereafter, supporting web browsers will refuse to load it. As such, the use of subresource integrity is mandatory for all external JavaScript resources loaded from sources not hosted on Mozilla-controlled systems.
+
+Note that CDNs must support the Cross Origin Resource Sharing (CORS) standard by setting the `Access-Control-Allow-Origin` header. Most CDNs already do this, but if the CDN you are loading does not support CORS, please contact Mozilla Information Security. We are happy to contact the CDN on your behalf.
+
+**指令：**
+
+- `integrity:` a cryptographic hash of the file, prepended with the hash function used to generate it
+- `crossorigin:` should be `anonymous` to inform browsers to send anonymous requests without cookies
+
+**举例：**
+
+```
+<!-- Load jQuery 2.1.4 from their CDN -->
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"
+  integrity="sha384-R4/ztc4ZlRqWjqIuvf6RX5yb/v90qNGx6fS48N0tRxiGkqveZETq72KgDVJCp2TC"
+  crossorigin="anonymous"></script>
+  
+<!-- Load AngularJS 1.4.8 from their CDN -->
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.4.8/angular.min.js"
+  integrity="sha384-r1y8TJcloKTvouxnYsi4PJAx+nHNr90ibsEn3zznzDzWBN9X3o3kbHLSgcIPtzAp"
+  crossorigin="anonymous"></script>
+  
+# Generate the hash myself
+$ curl -s https://ajax.googleapis.com/ajax/libs/angularjs/1.4.8/angular.min.js | \
+    openssl dgst -sha384 -binary | \
+    openssl base64 -A
+
+r1y8TJcloKTvouxnYsi4PJAx+nHNr90ibsEn3zznzDzWBN9X3o3kbHLSgcIPtzAp
+```
+
+### 6.11 X-Content-Type-Options
+
+`X-Content-Type-Options` is a header supported by Internet Explorer, Chrome and Firefox 50+ that tells it not to load scripts and stylesheets unless the server indicates the correct MIME type. Without this header, these browsers can incorrectly detect files as scripts and stylesheets, leading to XSS attacks. As such, all sites must set the `X-Content-Type-Options` header and the appropriate MIME types for files that they serve.
+
+**举例：**
+
+```
+# Prevent browsers from incorrectly detecting non-scripts as scripts
+X-Content-Type-Options: nosniff
+```
+
+### 6.12 X-Frame-Options
+
+`X-Frame-Options` is an HTTP header that allows sites control over how your site may be framed within an iframe. Clickjacking is a practical attack that allows malicious sites to trick users into clicking links on your site even though they may appear to not be on your site at all. As such, the use of the `X-Frame-Options` header is mandatory for all new websites, and all existing websites are expected to add support for `X-Frame-Options` as soon as possible.
+
+Note that `X-Frame-Options` has been superseded by the Content Security Policy’s `frame-ancestors` directive, which allows considerably more granular control over the origins allowed to frame a site. As `frame-ancestors` is not yet supported in IE11 and older, Edge, Safari 9.1 (desktop), and Safari 9.2 (iOS), it is recommended that sites employ `X-Frame-Options` in addition to using CSP.
+
+Sites that require the ability to be iframed must use either Content Security Policy and/or employ JavaScript defenses to prevent clickjacking from malicious origins.
+
+**指令：**
+
+- `DENY`: disallow allow attempts to iframe site (recommended)
+- `SAMEORIGIN`: allow the site to iframe itself
+- `ALLOW-FROM `*`uri`*: deprecated; instead use CSP’s `frame-ancestors` directive
+
+**举例：**
+
+```
+# Block site from being framed with X-Frame-Options and CSP
+Content-Security-Policy: frame-ancestors 'none'
+X-Frame-Options: DENY
+
+# Only allow my site to frame itself
+Content-Security-Policy: frame-ancestors 'self'
+X-Frame-Options: SAMEORIGIN
+
+# Allow only framer.mozilla.org to frame site
+# Note that this blocks framing from browsers that don't support CSP2+
+Content-Security-Policy: frame-ancestors https://framer.mozilla.org
+X-Frame-Options: DENY
+```
+
+### 6.13 X-XSS-Protection
+
+`X-XSS-Protection` is a feature of Internet Explorer and Chrome that stops pages from loading when they detect reflected cross-site scripting (XSS) attacks. Although these protections are largely unnecessary in modern browsers when sites implement a strong Content Security Policy that disables the use of inline JavaScript (`'unsafe-inline'`), they can still provide protections for users of older web browsers that don’t yet support CSP.
+
+New websites should use this header, but given the small risk of false positives, it is only recommended for existing sites. This header is unnecessary for APIs, which should instead simply return a restrictive Content Security Policy header.
+
+**举例：**
+
+```
+# Block pages from loading when they detect reflected XSS attacks
+X-XSS-Protection: 1; mode=block
+```
+
+----
 
 ## 7. HTTP消息
 
@@ -1600,3 +2094,4 @@ HTTP 流水线在现代浏览器中并不是默认被启用的：
 
 [Web 安全](https://infosec.mozilla.org/guidelines/web_security)
 
+​	
